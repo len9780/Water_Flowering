@@ -10,10 +10,10 @@
 */
 #define tcp_port 6000
 #define udp_port 6005
-#define Relay_Pin D1     // GPIP12:D6
-#define Wet_Pin D2
+#define Wet_Pin D1        // GPIP15:D1
+#define Relay_Pin D2      // GPIP14:D2
 #define AP_STA_SEL_PIN 14 // GPIP14:D5
-#define heartbeat_interval 30000
+
 #define mqtt_server "broker.mqtt-dashboard.com"
 
 #include <ESP8266WiFi.h>
@@ -23,23 +23,110 @@
 #include <ArduinoJson.h>
 #include "WiFiUdp.h"
 #include <PubSubClient.h>
-
-// const char *ssid = "117-20";
-// const char *password = "0978027009";
-const char *ssid = "hotspot";
-const char *password = "19891110";
+#include <EEPROM.h>
+#include <FS.h>
+const char *ssid = "117-20";
+const char *password = "0978027009";
+// const char *ssid = "hotspot";
+// const char *password = "19891110";
 const char *SoftAp_ssid = "Esp_wemos_d1_layne";
 const char *SoftAP_password = "12345678";
+int heartbeat_interval = 30000;
 StaticJsonDocument<200> doc;
 WiFiUDP Udp;
 ESP8266WebServer server(80);
 WiFiClient clients[5];
+char tcp_buf[1024] = {0};
 bool clientConnected[5] = {false, false, false, false, false};
 int maxClients = 5;
+FSInfo fs_info;
+File file;
+typedef enum rw
+{
+  read = 0,
+  write
+} rw;
+typedef enum switch_state
+{
+  ON = 1,
+  OFF = 0
+} switch_state;
+typedef enum connection_type
+{
+  http = 1,
+  tcp = 2,
+  mqtt = 4
+} connection_type;
 WiFiServer server_tcp(tcp_port);
 WiFiClient espClient_mqtt;
 PubSubClient client_mqtt(espClient_mqtt);
 unsigned long t1 = millis();
+char *write_config(File f, unsigned char rw, char *dat);
+int get_moisture(int detect_pin);
+void data_replay(char *data, int connection_status);
+void relay_swich(int switch_pin, int on_off_switch);
+void data_replay(char *data, int connection_status)
+{
+  if (connection_status & http)
+  {
+  }
+  else if (connection_status & tcp)
+  {
+  }
+  else if (connection_status & mqtt)
+  {
+    client_mqtt.publish("msgTopic", data);
+  }
+}
+void relay_swich(int switch_pin, int on_off_switch)
+{
+  digitalWrite(switch_pin, (on_off_switch == ON) ? HIGH : LOW);
+}
+int get_moisture(int detect_pin)
+{
+  if (!digitalRead(detect_pin))
+  {
+    //
+    Serial.println("Not Dry Detect");
+    return 0;
+  }
+  else
+  {
+    Serial.println("Dry Detect");
+    return 1;
+  }
+}
+char *write_config(File f, unsigned char rw, char *dat)
+{
+  char *r = NULL;
+  f.seek(0);
+  if (rw == write)
+  {
+    Serial.print("write_config write data:");
+    Serial.println(dat);
+    f.println(dat);
+    f.close();
+    f = SPIFFS.open("/config.txt", "r+");
+    return r;
+  }
+  else
+  {
+    int n = 0;
+    int i = 0;
+    char *s;
+    while (f.available())
+    {
+      f.read();
+      n++;
+    }
+    s = (char *)malloc(n);
+    // Serial.println("file content size:" + String(n));
+    f.seek(0);
+
+    Serial.print(String(f.readBytes(s, n)));
+    return s;
+  }
+}
 void updateFirmware(const char *url)
 {
   WiFiClient client;
@@ -57,6 +144,38 @@ void updateFirmware(const char *url)
   case HTTP_UPDATE_OK:
     // Serial.println("HTTP_UPDATE_OK");
     break;
+  }
+}
+
+void wifi_setting()
+{
+  if (server.method() == HTTP_POST)
+  {
+    char s[50];
+    StaticJsonDocument<200> doc;
+    StaticJsonDocument<200> config_json;
+    deserializeJson(doc, server.arg("plain"));
+    if (doc["ssid"] && doc["passwd"])
+    {
+      String output;
+      sprintf(s, "ssid:%s\npasswd:%s", String(doc["ssid"]), String(doc["passwd"]));
+      deserializeJson(config_json, write_config(file, read, NULL));
+      config_json["ssid"] = String(doc["ssid"]);
+      config_json["passwd"] = String(doc["passwd"]);
+      serializeJson(config_json, output);
+      write_config(file, write, (char *)output.c_str());
+      server.send(200, "text/plain", (char *)output.c_str());
+      // server.send(200, "text/plain", s);
+      delay(200);
+      ESP.restart();
+      // server.send(200, "text/plain", message);
+    }
+    else
+    {
+      char *message = "{\"result\":1}";
+      Serial.println(message);
+      server.send(200, "text/plain", message);
+    }
   }
 }
 
@@ -227,9 +346,21 @@ void web_init()
 {
   server.on("/", handleRoot);
   server.on("/setgpio", set_gpio_callback);
+  server.on("/setwifi", wifi_setting);
   server.on("/info", device_info);
+  server.on("/factoryReset", factoryReset);
+  server.on("/get_moisture_state", moisture_callback);
   // server.on("/network_setting", network_setting);
   server.begin();
+}
+
+void moisture_callback()
+{
+  char s[50] = {0};
+  sprintf(s, "%s-%d-total:%s-used:%s", (get_moisture(Wet_Pin) == 1) ? "Dry" : "Not Dry", analogRead(A0), String(fs_info.totalBytes), String(fs_info.usedBytes));
+  Serial.println("size:" + String(fs_info.totalBytes) + "used:" + String(fs_info.usedBytes));
+  // server.send(200, "text/html", (get_moisture(Wet_Pin) == 1) ? "Not Dry" : "Dry");
+  server.send(200, "text/html", s);
 }
 void device_info()
 {
@@ -243,36 +374,86 @@ void device_info()
 
   // 加入一個名稱為 "age" 的整數欄位
   doc["mac"] = mac_s;
+  doc["ver"] = "1.0";
   // 將 JSON 物件轉換成字串輸出
   String jsonString;
   serializeJson(doc, jsonString);
   Serial.println(jsonString);
   server.send(200, "text/html", jsonString);
 }
-void boot_up_blink(int blink_count,int interval_ms)
+void factoryReset()
+{
+  if (file.truncate(0))
+  {
+    Serial.println("File content cleared");
+    server.send(200, "text/html", "File content cleared");
+  }
+  else
+  {
+    Serial.println("Error truncating file");
+    server.send(200, "text/html", "Error truncating file");
+  }
+  delay(500);
+  ESP.restart();
+}
+void boot_up_blink(int blink_count, int interval_ms)
 {
   digitalWrite(LED_BUILTIN, LOW);
 
-  for(int i =0;i<blink_count;i++){
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(interval_ms);
+  for (int i = 0; i < blink_count; i++)
+  {
     digitalWrite(LED_BUILTIN, LOW);
     delay(interval_ms);
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(interval_ms);
   }
-  
 }
 void setup()
 {
+
   Serial.begin(115200);
+  StaticJsonDocument<200> doc;
+  if (SPIFFS.begin())
+  {
+    Serial.println("SPIFFS started successfully");
+    SPIFFS.info(fs_info);
+    file = SPIFFS.open("/config.txt", "r+");
+    if (file)
+    {
+      // file.println("Hello, this is a test!");
+      // file.close();
+      Serial.print("opening file open success:[");
+      char *s = write_config(file, read, NULL);
+      // Serial.print(s);
+      Serial.println("]");
+      deserializeJson(doc, s);
+      Serial.print("ssid:");
+      Serial.println(doc["ssid"].as<String>().c_str());
+      Serial.println(doc["ssid"].as<String>().length());
+      Serial.print("passwd:");
+      Serial.println(doc["passwd"].as<String>().c_str());
+      Serial.println(doc["passwd"].as<String>().length());
+    }
+    else
+    {
+      Serial.println("Error opening file for writing");
+    }
+  }
+  else
+  {
+    Serial.println("Error starting SPIFFS");
+  }
   pinMode(LED_BUILTIN, OUTPUT); // Initialize the LED_BUILTIN pin as an output
   pinMode(Relay_Pin, OUTPUT);   // Initialize the LED_BUILTIN pin as an output
-  pinMode(Wet_Pin, INPUT); 
+  pinMode(Wet_Pin, INPUT);
+  pinMode(A0, INPUT);
   pinMode(AP_STA_SEL_PIN, INPUT_PULLUP);
-  boot_up_blink(3,300);
   if (digitalRead(AP_STA_SEL_PIN))
   {
+    boot_up_blink(5, 100);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
+    // WiFi.begin(ssid, password);
+    WiFi.begin(doc["ssid"].as<String>().c_str(), doc["passwd"].as<String>().c_str());
     while (WiFi.status() != WL_CONNECTED)
     {
       delay(1000);
@@ -284,7 +465,7 @@ void setup()
   }
   else
   {
-    boot_up_blink(5,100);
+    boot_up_blink(10, 100);
     WiFi.mode(WIFI_AP);
     WiFi.softAP(SoftAp_ssid, SoftAP_password);
     Serial.print("WIFI_AP(IP):");
@@ -414,4 +595,8 @@ void loop()
     // heartbeat();
   }
   server.handleClient();
+  Serial.print("Free Heap: ");
+  Serial.println(ESP.getFreeHeap());
+
+  delay(1000); // Delay for 1 second
 }
