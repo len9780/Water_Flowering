@@ -10,9 +10,9 @@
 */
 #define tcp_port 6000
 #define udp_port 6005
-#define Wet_Pin D1        // GPIP15:D1
-#define Relay_Pin D2      // GPIP14:D2
-#define AP_STA_SEL_PIN 14 // GPIP14:D5
+#define Wet_Pin D1        // GPIO15:D1
+#define Relay_Pin D4      // GPIO14:D4
+#define AP_STA_SEL_PIN 16 // GPIO14:D0
 
 #define mqtt_server "broker.mqtt-dashboard.com"
 
@@ -24,7 +24,10 @@
 #include "WiFiUdp.h"
 #include <PubSubClient.h>
 #include <EEPROM.h>
-#include <FS.h>
+
+#include "CD74HC4067.h"
+#include "Config_setting.h"
+#include "Ra01.h"
 const char *ssid = "117-20";
 const char *password = "0978027009";
 // const char *ssid = "hotspot";
@@ -39,13 +42,9 @@ WiFiClient clients[5];
 char tcp_buf[1024] = {0};
 bool clientConnected[5] = {false, false, false, false, false};
 int maxClients = 5;
-FSInfo fs_info;
-File file;
-typedef enum rw
-{
-  read = 0,
-  write
-} rw;
+extern FSInfo fs_info;
+extern File file;
+
 typedef enum switch_state
 {
   ON = 1,
@@ -61,7 +60,7 @@ WiFiServer server_tcp(tcp_port);
 WiFiClient espClient_mqtt;
 PubSubClient client_mqtt(espClient_mqtt);
 unsigned long t1 = millis();
-char *write_config(File f, unsigned char rw, char *dat);
+
 int get_moisture(int detect_pin);
 void data_replay(char *data, int connection_status);
 void relay_swich(int switch_pin, int on_off_switch);
@@ -96,37 +95,7 @@ int get_moisture(int detect_pin)
     return 1;
   }
 }
-char *write_config(File f, unsigned char rw, char *dat)
-{
-  char *r = NULL;
-  f.seek(0);
-  if (rw == write)
-  {
-    Serial.print("write_config write data:");
-    Serial.println(dat);
-    f.println(dat);
-    f.close();
-    f = SPIFFS.open("/config.txt", "r+");
-    return r;
-  }
-  else
-  {
-    int n = 0;
-    int i = 0;
-    char *s;
-    while (f.available())
-    {
-      f.read();
-      n++;
-    }
-    s = (char *)malloc(n);
-    // Serial.println("file content size:" + String(n));
-    f.seek(0);
 
-    Serial.print(String(f.readBytes(s, n)));
-    return s;
-  }
-}
 void updateFirmware(const char *url)
 {
   WiFiClient client;
@@ -172,7 +141,8 @@ void wifi_setting()
     }
     else
     {
-      char *message = "{\"result\":1}";
+      char message[50] ;
+      sprintf(message,"%s","{\"result\":1}"); 
       Serial.println(message);
       server.send(200, "text/plain", message);
     }
@@ -183,14 +153,14 @@ void set_gpio_callback()
 {
   if (server.hasArg("cmd") && (server.arg("cmd") == "setOn"))
   {
-    digitalWrite(LED_BUILTIN, LOW);
+    // digitalWrite(LED_BUILTIN, LOW);
     digitalWrite(Relay_Pin, HIGH);
     Serial.println("setOn");
     server.send(200, "text/plain", String("setOn"));
   }
   else if (server.hasArg("cmd") && (server.arg("cmd") == "setOff"))
   {
-    digitalWrite(LED_BUILTIN, HIGH);
+    // digitalWrite(LED_BUILTIN, HIGH);
     digitalWrite(Relay_Pin, LOW);
     Serial.println("setOff");
     server.send(200, "text/plain", String("setOff"));
@@ -342,26 +312,7 @@ void tcp_task()
   // client.stop();
   // Serial.println("Client disconnected");
 }
-void web_init()
-{
-  server.on("/", handleRoot);
-  server.on("/setgpio", set_gpio_callback);
-  server.on("/setwifi", wifi_setting);
-  server.on("/info", device_info);
-  server.on("/factoryReset", factoryReset);
-  server.on("/get_moisture_state", moisture_callback);
-  // server.on("/network_setting", network_setting);
-  server.begin();
-}
 
-void moisture_callback()
-{
-  char s[50] = {0};
-  sprintf(s, "%s-%d-total:%s-used:%s", (get_moisture(Wet_Pin) == 1) ? "Dry" : "Not Dry", analogRead(A0), String(fs_info.totalBytes), String(fs_info.usedBytes));
-  Serial.println("size:" + String(fs_info.totalBytes) + "used:" + String(fs_info.usedBytes));
-  // server.send(200, "text/html", (get_moisture(Wet_Pin) == 1) ? "Not Dry" : "Dry");
-  server.send(200, "text/html", s);
-}
 void device_info()
 {
   StaticJsonDocument<200> doc;
@@ -374,7 +325,7 @@ void device_info()
 
   // 加入一個名稱為 "age" 的整數欄位
   doc["mac"] = mac_s;
-  doc["ver"] = "1.0";
+  doc["ver"] = firm_ver;
   // 將 JSON 物件轉換成字串輸出
   String jsonString;
   serializeJson(doc, jsonString);
@@ -396,6 +347,32 @@ void factoryReset()
   delay(500);
   ESP.restart();
 }
+
+void moisture_callback()
+{
+  char s[50] = {0};
+  // sprintf(s, "%s-%d-total:%s-used:%s", (get_moisture(Wet_Pin) == 1) ? "Dry" : "Not Dry", analogRead(A0), String(fs_info.totalBytes), String(fs_info.usedBytes));
+  sprintf(s, "Water_Level:%d,soil_moisture:%d",  get_val_from_CD74HC4067(CH1,A0), get_val_from_CD74HC4067(CH0,A0));
+  
+  Serial.println("size:" + String(fs_info.totalBytes) + "used:" + String(fs_info.usedBytes));
+  // server.send(200, "text/html", (get_moisture(Wet_Pin) == 1) ? "Not Dry" : "Dry");
+  server.send(200, "text/html", s);
+}
+void web_init()
+{
+  server.on("/", handleRoot);
+  server.on("/setgpio", set_gpio_callback);
+  server.on("/setwifi", wifi_setting);
+  server.on("/info", device_info);
+  server.on("/factoryReset", factoryReset);
+  server.on("/get_moisture_state", moisture_callback);
+  server.on("/lora_test", lora_test);
+  // server.on("/network_setting", network_setting);
+  server.begin();
+}
+
+
+
 void boot_up_blink(int blink_count, int interval_ms)
 {
   digitalWrite(LED_BUILTIN, LOW);
@@ -408,11 +385,17 @@ void boot_up_blink(int blink_count, int interval_ms)
     delay(interval_ms);
   }
 }
+void lora_test(){
+  Ra01_init();
+  server.send(200, "text/plain", "lora_test");
+}
 void setup()
 {
 
   Serial.begin(115200);
   StaticJsonDocument<200> doc;
+  CD74HC4067_init();
+  // Ra01_init();
   if (SPIFFS.begin())
   {
     Serial.println("SPIFFS started successfully");
