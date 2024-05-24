@@ -12,7 +12,7 @@
 #define udp_port 6005
 #define Wet_Pin D1        // GPIO15:D1
 #define Relay_Pin D4      // GPIO14:D4
-#define AP_STA_SEL_PIN 16 // GPIO14:D0
+#define AP_STA_SEL_PIN D0 // GPIO14:D0
 
 #define mqtt_server "broker.mqtt-dashboard.com"
 
@@ -391,10 +391,14 @@ void lora_test(){
 }
 void setup()
 {
-
-  Serial.begin(115200);
   StaticJsonDocument<200> doc;
   CD74HC4067_init();
+  pinMode(LED_BUILTIN, OUTPUT); // Initialize the LED_BUILTIN pin as an output
+  pinMode(Relay_Pin, OUTPUT);   // Initialize the LED_BUILTIN pin as an output
+  pinMode(Wet_Pin, INPUT);
+  pinMode(A0, INPUT);
+  pinMode(AP_STA_SEL_PIN, INPUT_PULLUP);
+  Serial.begin(115200);
   // Ra01_init();
   if (SPIFFS.begin())
   {
@@ -426,11 +430,6 @@ void setup()
   {
     Serial.println("Error starting SPIFFS");
   }
-  pinMode(LED_BUILTIN, OUTPUT); // Initialize the LED_BUILTIN pin as an output
-  pinMode(Relay_Pin, OUTPUT);   // Initialize the LED_BUILTIN pin as an output
-  pinMode(Wet_Pin, INPUT);
-  pinMode(A0, INPUT);
-  pinMode(AP_STA_SEL_PIN, INPUT_PULLUP);
   if (digitalRead(AP_STA_SEL_PIN))
   {
     boot_up_blink(5, 100);
