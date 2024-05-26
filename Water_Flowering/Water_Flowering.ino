@@ -11,7 +11,7 @@
 #define tcp_port 6000
 #define udp_port 6005
 #define Wet_Pin D1        // GPIO15:D1
-#define Relay_Pin D4      // GPIO14:D4
+#define Relay_Pin D3      // GPIO0:D3
 #define AP_STA_SEL_PIN D0 // GPIO14:D0
 
 #define mqtt_server "broker.mqtt-dashboard.com"
@@ -395,7 +395,7 @@ void setup()
   CD74HC4067_init();
   pinMode(LED_BUILTIN, OUTPUT); // Initialize the LED_BUILTIN pin as an output
   pinMode(Relay_Pin, OUTPUT);   // Initialize the LED_BUILTIN pin as an output
-  pinMode(Wet_Pin, INPUT);
+  // pinMode(Wet_Pin, INPUT);
   pinMode(A0, INPUT);
   pinMode(AP_STA_SEL_PIN, INPUT_PULLUP);
   Serial.begin(115200);
@@ -579,6 +579,17 @@ void loop()
   server.handleClient();
   Serial.print("Free Heap: ");
   Serial.println(ESP.getFreeHeap());
-
-  delay(1000); // Delay for 1 second
+  // get_soil_moisture_A0();
+  // delay(1000);
+  // get_soil_moisture_D0();
+  // delay(1000);
+  // get_water_leve();
+  // delay(1000); // Delay for 1 second
+  // digitalWrite(Relay_Pin, HIGH);
+  // Serial.println("setOn");
+  // delay(5000);
+  // digitalWrite(Relay_Pin, LOW);
+  // Serial.println("setOff");
+  // delay(5000);
+  delay(1000);
 }
