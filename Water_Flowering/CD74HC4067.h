@@ -21,4 +21,7 @@ typedef enum {
 } channel_number;
 void CD74HC4067_init();
 int get_val_from_CD74HC4067(int channel, int analog_read_pin);
+int get_soil_moisture_A0();
+int get_soil_moisture_D0();
+int get_water_leve();
 // #endif
